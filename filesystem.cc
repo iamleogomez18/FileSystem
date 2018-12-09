@@ -67,7 +67,7 @@ int read(virtualfile* f, char* buf, int size);
 int seek(virtualfile* f, int offset);
 int getFileNumber(char* path, char* filename);
 int addToInodeTable(inode file);
-inode readfrominodetable(int filenum);
+inode readFromInodeTable(int filenum);
 void seektoempty();
 int seektodirectory(char* dirname);
 
@@ -131,7 +131,7 @@ void format(int fs){
 
     nextFD = 1;
 
-    //iTable = malloc(sizeof(inodetable));
+    iTable = (inodetable*)malloc(sizeof(inodetable));
     iTable->first = 0;
     iTable->length = INODE_SIZE;
     
@@ -203,4 +203,143 @@ void seektoempty() {
  }
 
 
+ int makefile(char* path, char* filename) {
+  printf("makefile() called");
+  //make sure file name is of valid length
+  if(strlen(filename) < FILENAME_MIN_SIZE) {
+    cout << "ERROR: Filename " << filename << " too short" << endl;
+    return 1;
+  }
+  else if(strlen(filename) > FILENAME_MAX_SIZE) {
+    cout << "ERROR: Filename " << filename << " is too long" << endl;
+    return 1;
+  }
+  //find an empty memory spot for the file to live
+  int result;
+  int loc;
+  loc = lseek(fs, LOC_ROOT, SEEK_SET);
+  char buf[1];
+  //read the first byte of each memory location to see if it's available
+  read(fs, buf, 1);
+  while(strcmp(buf, "") != 0) {
+    loc = lseek(fs, BLOCK_SIZE - 1, SEEK_CUR);
+    read(fs, buf, 1);
+  }
+  printf("Saving file at memory location 0x%x.\n", loc);
+  //write a non-zero byte at start of block so it's known that this block is taken
+  lseek(fs, loc, SEEK_SET);
+  result = write(fs, "1", 1);
 
+  //create inode entry
+  inode file;
+  time_t current;
+  time(&current);
+  file.createTime = current;
+  file.editedTime = current;
+  file.isDir = false;
+  file.filenum = ++nextFD;
+  file.address = loc;
+  printf("Creating file with inode:\n   created = %d\n   edited = %d\n   isDir = %d\n   filenum = %d\n   addr = %d\n", (int)file.createTime, (int)file.editedTime, file.isDir, file.filenum, file.address);
+
+  //add file pair to directory
+  //filepair is a string of "filename , #"
+  char* filepair = (char*) malloc((FILENAME_MAX_SIZE + 2)*sizeof(char) + sizeof(int));
+  char* filepairspacer = ",";
+  strcpy(filepair, filepairspacer);
+  strcat(filepair, filename);
+  strcat(filepair, filepairspacer);
+  char* fnumstring = (char*) malloc(16);
+  sprintf(fnumstring, "%d", file.filenum);
+  strcat(filepair, fnumstring);
+  //if the path specified is the root (specified by "/" or just ""), navigate to it
+  if(strcmp(path,"/") == 0 || strcmp(path,"") == 0) {
+    loc = lseek(fs, LOC_ROOT, SEEK_SET);
+  }
+  else {
+    //the path specified isn't the root, so we have to find the correct directory    
+    seektodirectory(path);
+  }
+  //find next blank byte in the current directory to put the file pair
+  seektoempty();
+  result = write(fs, filepair, strlen(filepair)*sizeof(char));
+  //check if write to directory worked
+  if(result == -1) {
+    printf("Error writing file %s to virtual filesystem.\n", filename);
+    perror("Error writing file in my_mkfile().");
+    return(EXIT_FAILURE);
+  }
+  else {
+    printf("Successfully wrote file '%s' to directory '%s'.\n", filename, path);
+  }
+  //save file inode to inode table in virtual filesystem
+  addToInodeTable(file);
+
+  return 0;
+}
+
+int seekToDirectory(char* path){
+    char* pdup = strdup(path);
+    char** pathArray = (char**) malloc(strlen(path)* sizeof(char));
+    char* pathElement = strtok(pdup, "/");
+    pathArray[0] = ""; //this is the root
+
+    int i;
+    for(i = 1; pathElement != NULL; i++){
+        pathArray[i] = pathElement;
+        pathElement = strtok(NULL, "/");
+    }
+    i--;
+
+    lseek(fs, LOC_ROOT, SEEK_SET);
+
+    int j, dirNum;
+    char* childDir;
+    char* currentDir = (char*)malloc(512);
+
+    for(j = 0;j<i; j++){
+        read(fs, currentDir, 512);
+        childDir = strstr(currentDir, pathArray[j+1]);
+        if(childDir == NULL){
+            cout << "ERROR: Directory " << pathArray[j+1] << "not found in " << currentDir << endl;
+            return(EXIT_FAILURE);
+        }
+
+        while(*childDir != ','){
+            childDir++;
+        }
+        childDir++;
+        dirNum = *childDir - '0';
+        inode next = readFromInodeTable(dirNum);
+        int nextAddr = next.address;
+        lseek(fs, nextAddr, SEEK_SET);
+    }
+    return 0;
+}
+
+inode readFromInodeTable(int fileNumber){
+    inode in;
+    lseek(fs,0,SEEK_SET);
+    char* iTable = (char*) malloc(2048);
+    read(fs, iTable, 2048);
+    char** inodesArray = (char**) malloc(strlen(iTable)*sizeof(char));
+    char* intok = strtok(iTable, "*");
+    int i;
+    for(i = 0; intok != NULL && strcmp(intok, "\0") !=0; i++){
+        inodesArray[i] = intok;
+        intok = strtok(NULL, "*");
+    }
+
+    int inodeNum, j;
+    for(j =0; j<<i; j++){
+        inodeNum = inodesArray[j][0] - '0';
+        if(inodeNum == fileNumber){
+            break;
+        }
+    }
+    in.filenum = atoi(strtok(inodesArray[j],","));
+    //in.isDir = atoi(strtok)
+    in.createTime = atoi(strtok(NULL,","));
+    in.editedTime = atoi(strtok(NULL,","));
+    in.address = atoi(strtok(NULL,","));
+    return in;
+}
