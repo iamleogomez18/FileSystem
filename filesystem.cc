@@ -1,8 +1,8 @@
 
 /*
     Author: Likhon D. Gomes
-    Professor Jamie Payton
-    Fall 2018
+    Professor Eugene Kwatney
+    Spring 2019
     Lab 4 File System
 */
 
